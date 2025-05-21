@@ -17,7 +17,7 @@ from datetime import datetime
 INPUT_GRAPH_PATH = "model/final_heterogeneous_graph.graphml"
 OUTPUT_DIR = "outputs"
 REPORTS_DIR = os.path.join(OUTPUT_DIR, "reports")
-LOG_FILE = os.path.join(OUTPUT_DIR, "exploratory_analysis.log")
+LOG_FILE = os.path.join(OUTPUT_DIR, "log/exploratory_analysis.log")
 OUTPUT_REPORT_PATH = os.path.join(REPORTS_DIR, "exploratory_analysis_report.md")
 OUTPUT_SUMMARY_CSV = os.path.join(REPORTS_DIR, "graph_summary.csv")
 OUTPUT_TOP_ENTITIES_CSV = os.path.join(REPORTS_DIR, "top_entities.csv")

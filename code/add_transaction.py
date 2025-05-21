@@ -8,7 +8,7 @@ from datetime import datetime
 SHAREHOLDER_GRAPH_PATH = "model/shareholder_graph.graphml"
 TRANSACTION_CSV_PATH = "data/交易数据.csv" # 由 convert_excel_to_csv.py 生成
 FINAL_GRAPH_PATH = "model/final_heterogeneous_graph.graphml"
-LOG_FILE_PATH = "outputs/add_transaction.log"  # 日志文件路径
+LOG_FILE_PATH = "outputs/log/add_transaction.log"  # 日志文件路径
 
 # 列名映射 (根据交易数据.csv的实际列名)
 # 从之前的探索，我们知道列名是： 年份, 月份, 类型, 成员单位, 交易对象, 交易金额
