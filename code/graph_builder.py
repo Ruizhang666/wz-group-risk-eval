@@ -143,9 +143,8 @@ def _parse_children_recursive(main_row_entity_id, children_data, graph, level_0_
             'source_info': 'children_field',
             'label': '控股' # 新增：为边添加 '控股' 标签
         }
-        # 只有当边 (Shareholder -> Company) 不存在时才从children添加
-        if not graph.has_edge(shareholder_node_id, main_row_entity_id):
-            graph.add_edge(shareholder_node_id, main_row_entity_id, **edge_attrs)
+        # 修改：移除边存在性检查，直接添加边
+        graph.add_edge(shareholder_node_id, main_row_entity_id, **edge_attrs)
 
         # 递归处理孙子节点 (即当前股东的股东)
         # main_row_entity_id for the recursive call will be the current shareholder_node_id
@@ -156,7 +155,8 @@ def _parse_children_recursive(main_row_entity_id, children_data, graph, level_0_
 
 def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
     """
-    从指定的CSV文件读取股权数据并构建一个NetworkX DiGraph。
+    从指定的CSV文件读取股权数据并构建一个NetworkX MultiDiGraph。
+    支持真正的多边特性，允许在相同节点对之间存在多条边。
     """
     encodings_to_try = ['utf-8-sig', 'utf-8', 'gbk', 'gb18030', 'gb2312', 'big5']
     df = None
@@ -174,7 +174,7 @@ def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
         except pd.errors.EmptyDataError:
             print(f"GraphBuilder Warn: CSV file '{csv_path}' is empty or could not be read with encoding {encoding}.")
             # 如果文件就是空的，不应该继续尝试其他编码或报错，而是返回空图或相应处理
-            G = nx.DiGraph()
+            G = nx.MultiDiGraph()
             print(f"GraphBuilder: Returning empty graph due to empty or unreadable CSV: {csv_path}")
             return G
         except Exception as e:
@@ -184,18 +184,18 @@ def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
     if not read_successful or df is None:
         print(f"GraphBuilder Error: Could not read CSV file '{csv_path}' with any of the attempted encodings.")
         # 可以选择抛出异常或者返回一个空图，这里选择后者以便调用方可以处理
-        G = nx.DiGraph()
+        G = nx.MultiDiGraph()
         print(f"GraphBuilder: Returning empty graph as CSV could not be loaded: {csv_path}")
         return G
     
     # Check if DataFrame is empty after successful read (e.g. header only or all rows filtered out previously)
     if df.empty:
         print(f"GraphBuilder Warn: CSV file '{csv_path}' was read successfully but resulted in an empty DataFrame.")
-        G = nx.DiGraph()
+        G = nx.MultiDiGraph()
         print(f"GraphBuilder: Returning empty graph due to empty DataFrame from: {csv_path}")
         return G
 
-    G = nx.DiGraph()
+    G = nx.MultiDiGraph()
 
     # 搜集所有 level 0 公司的ID (eid 或 name)
     level_0_ids = set()
@@ -243,8 +243,8 @@ def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
                          G.nodes[parent_id_val]['label'] = '股东'
 
                 # MODIFIED EDGE DIRECTION HERE: current_node_id (Child) -> parent_id_val (Parent)
-                if not G.has_edge(current_node_id, parent_id_val):
-                    G.add_edge(current_node_id, parent_id_val, **edge_attrs)
+                # 修改：移除边存在性检查，直接添加边
+                G.add_edge(current_node_id, parent_id_val, **edge_attrs)
     
     # 第二遍：处理children字段，补充可能的节点和边
     # shareholder_in_children_json -> current_node_id
@@ -257,8 +257,39 @@ def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
                 if not G.has_node(current_node_id):
                      G.add_node(current_node_id, name=row['name'], type=row.get('type', ''), short_name=row.get('short_name', ''), level=row.get('level', ''))
                 _parse_children_recursive(current_node_id, children_json_str, G, level_0_ids) # Pass level_0_ids
-                
+    
+    # 统计平行边数据
+    parallel_edges_count = 0       # 平行边总数
+    nodes_with_parallel_edges = 0  # 有平行边的节点对数量
+    max_parallel_edges = 0
+    parallel_edge_pairs = {}
+    
+    for u, v in G.edges():
+        edge_count = G.number_of_edges(u, v)
+        if edge_count > 1:
+            if (u, v) not in parallel_edge_pairs:
+                parallel_edge_pairs[(u, v)] = edge_count
+                nodes_with_parallel_edges += 1
+                parallel_edges_count += edge_count  # 累计所有平行边
+            max_parallel_edges = max(max_parallel_edges, edge_count)
+    
     print(f"GraphBuilder: Built graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+    print(f"GraphBuilder: Found {nodes_with_parallel_edges} node pairs with parallel edges.")
+    print(f"GraphBuilder: Total parallel edges: {parallel_edges_count} (including all edges between these node pairs).")
+    print(f"GraphBuilder: Maximum parallel edges between any node pair: {max_parallel_edges}")
+    
+    # 显示一些平行边示例
+    if parallel_edge_pairs:
+        print("\nGraphBuilder: Examples of parallel edges:")
+        shown = 0
+        for (u, v), count in sorted(parallel_edge_pairs.items(), key=lambda x: x[1], reverse=True):
+            if shown < 5:  # 只显示前5个示例
+                u_name = G.nodes[u].get('name', u)
+                v_name = G.nodes[v].get('name', v)
+                u_type = G.nodes[u].get('label', '未知')
+                v_type = G.nodes[v].get('label', '未知')
+                print(f"  {u_name} [{u_type}] -> {v_name} [{v_type}]: {count} edges")
+                shown += 1
     
     # 统计带标签的节点和边
     shareholder_nodes_count = 0
@@ -306,6 +337,7 @@ def save_graph(graph, file_path):
 
 if __name__ == '__main__':
     # 构建图并保存
+    print("\n===== 构建多边图(MultiDiGraph) =====")
     graph = build_graph("data/三层股权穿透输出数据_1.csv")
     
     # 确保输出目录存在
@@ -314,4 +346,4 @@ if __name__ == '__main__':
     # 保存图
     save_graph(graph, "model/shareholder_graph.graphml")
 
-    print(f"图已保存到 model/shareholder_graph.graphml") 
+    print(f"多边图已保存到 model/shareholder_graph.graphml") 

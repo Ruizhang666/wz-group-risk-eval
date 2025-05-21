@@ -8,6 +8,7 @@ from datetime import datetime
 SHAREHOLDER_GRAPH_PATH = "model/shareholder_graph.graphml"
 TRANSACTION_CSV_PATH = "data/交易数据.csv" # 由 convert_excel_to_csv.py 生成
 FINAL_GRAPH_PATH = "model/final_heterogeneous_graph.graphml"
+SIMPLIFIED_GRAPH_PATH = "model/simplified_loop_detection_graph.graphml" # 用于环路检测的简化图
 LOG_FILE_PATH = "outputs/log/add_transaction.log"  # 日志文件路径
 
 # 列名映射 (根据交易数据.csv的实际列名)
@@ -102,6 +103,76 @@ def save_final_graph(graph, file_path):
     except Exception as e:
         log_message(f"保存最终图到 '{file_path}' 时发生错误: {e}", print_console=True)
 
+def create_simplified_graph(graph):
+    """
+    创建一个简化的图用于环路检测
+    - 每对节点之间至多只保留一条边
+    - 保留所有节点属性
+    - 边的属性简化为类型和方向
+    - 合并多重图中的平行边
+    """
+    log_message("正在创建用于环路检测的简化图...", print_console=True)
+    
+    # 检查原图是否是MultiDiGraph
+    is_multi = isinstance(graph, nx.MultiDiGraph)
+    log_message(f"原图类型: {type(graph).__name__}", print_console=True)
+    
+    # 创建新的有向图
+    simplified_graph = nx.DiGraph()
+    
+    # 复制所有节点及其属性
+    for node, attrs in graph.nodes(data=True):
+        simplified_graph.add_node(node, **attrs)
+    
+    # 用于跟踪已添加的边
+    added_edges = set()
+    skipped_edges = 0
+    
+    # 处理所有边，每对节点之间只保留一条边
+    if is_multi:
+        # 对于多重图，合并平行边
+        for u, v, key, attrs in graph.edges(data=True, keys=True):
+            edge_key = (u, v)
+            
+            # 如果这对节点之间已经添加了边，则跳过
+            if edge_key in added_edges:
+                skipped_edges += 1
+                continue
+            
+            # 简化边属性，只保留最重要的属性
+            simplified_attrs = {
+                'label': attrs.get('label', '关联'),
+                'nature': attrs.get('nature', '')
+            }
+            
+            # 添加边并标记为已添加
+            simplified_graph.add_edge(u, v, **simplified_attrs)
+            added_edges.add(edge_key)
+    else:
+        # 对于普通有向图，直接遍历边
+        for u, v, attrs in graph.edges(data=True):
+            edge_key = (u, v)
+            
+            # 如果这对节点之间已经添加了边，则跳过
+            if edge_key in added_edges:
+                skipped_edges += 1
+                continue
+            
+            # 简化边属性，只保留最重要的属性
+            simplified_attrs = {
+                'label': attrs.get('label', '关联'),
+                'nature': attrs.get('nature', '')
+            }
+            
+            # 添加边并标记为已添加
+            simplified_graph.add_edge(u, v, **simplified_attrs)
+            added_edges.add(edge_key)
+    
+    log_message(f"简化图创建完成，包含 {simplified_graph.number_of_nodes()} 个节点和 {simplified_graph.number_of_edges()} 条边。", print_console=True)
+    log_message(f"原图有 {graph.number_of_edges()} 条边，简化后跳过了 {skipped_edges} 条冗余边。", print_console=True)
+    
+    return simplified_graph
+
 def find_node_by_name(graph, name):
     """根据name属性查找节点ID"""
     for node_id, attrs in graph.nodes(data=True):
@@ -130,6 +201,20 @@ def add_transaction_data_to_graph(graph, transaction_csv_path):
     except Exception as e:
         log_message(f"读取交易数据CSV '{transaction_csv_path}' 时发生错误: {e}", print_console=True)
         return graph
+
+    # 转换成MultiDiGraph以支持多条平行边
+    original_graph_type = type(graph).__name__
+    if not isinstance(graph, nx.MultiDiGraph):
+        log_message(f"将图从 {original_graph_type} 转换为 MultiDiGraph，以支持多条平行边...", print_console=True)
+        multi_graph = nx.MultiDiGraph()
+        # 复制所有节点及其属性
+        for node, attrs in graph.nodes(data=True):
+            multi_graph.add_node(node, **attrs)
+        # 复制所有边及其属性
+        for u, v, attrs in graph.edges(data=True):
+            multi_graph.add_edge(u, v, **attrs)
+        graph = multi_graph
+        log_message("图转换完成。", print_console=True)
 
     # 初始化计数器
     new_member_units_count = 0
@@ -161,7 +246,7 @@ def add_transaction_data_to_graph(graph, transaction_csv_path):
             if not member_unit_name or not trading_partner_name:
                 log_message(f"警告：成员单位或交易对象名称为空，跳过此行: {row.to_dict()}")
                 continue
-
+            
             # 1. 处理 "成员单位" 节点
             # 首先尝试根据name属性查找已存在的成员单位节点
             member_unit_node_id = find_node_by_name(graph, member_unit_name)
@@ -243,10 +328,7 @@ def add_transaction_data_to_graph(graph, transaction_csv_path):
                 u_node, v_node = trading_partner_node_id, member_unit_node_id
             
             if u_node and v_node:
-                # NetworkX MultiDiGraph允许相同节点间有多个边，只要它们的key不同或属性不同。
-                # 为了简单起见，如果只关心是否存在交易关系，可以先检查边是否存在。
-                # 但由于交易有年月金额，同一对实体间可能有多笔交易，所以允许多重边是合理的。
-                # add_edge 会自动处理多重边，每次都是一条新的边。
+                # 多重图允许添加多条平行边，每条交易一个边
                 graph.add_edge(u_node, v_node, **edge_attrs)
                 new_transaction_edges_count += 1
             else:
@@ -295,6 +377,33 @@ def add_transaction_data_to_graph(graph, transaction_csv_path):
                 attrs = graph.nodes[node]
                 log_message(f"  示例 {i+1}: ID={node}, 属性={attrs}", print_console=True)
     
+    # 记录多重边的统计
+    if isinstance(graph, nx.MultiDiGraph):
+        # 找出具有多重边的节点对
+        multi_edges = {}
+        for u, v, k in graph.edges(keys=True):
+            if (u, v) not in multi_edges:
+                multi_edges[(u, v)] = 1
+            else:
+                multi_edges[(u, v)] += 1
+        
+        # 过滤出有多条边的节点对
+        multi_edges = {k: v for k, v in multi_edges.items() if v > 1}
+        
+        if multi_edges:
+            log_message("\n--- 多重边统计 ---", print_console=True)
+            log_message(f"发现 {len(multi_edges)} 对节点之间有多条边", print_console=True)
+            log_message(f"平均每对节点之间的边数：{sum(multi_edges.values()) / len(multi_edges):.2f}", print_console=True)
+            
+            # 显示一些例子
+            log_message("\n多重边示例：", print_console=True)
+            for (u, v), count in sorted(multi_edges.items(), key=lambda x: x[1], reverse=True)[:5]:
+                u_name = graph.nodes[u].get('name', u)
+                v_name = graph.nodes[v].get('name', v)
+                u_label = graph.nodes[u].get('label', '未知')
+                v_label = graph.nodes[v].get('label', '未知')
+                log_message(f"  {u_name} [{u_label}] 和 {v_name} [{v_label}] 之间有 {count} 条边", print_console=True)
+    
     return graph
 
 
@@ -315,6 +424,11 @@ if __name__ == "__main__":
             # 3. 保存最终的异构图
             save_final_graph(final_graph, FINAL_GRAPH_PATH)
             log_message(f"\n最终图包含 {final_graph.number_of_nodes()} 个节点和 {final_graph.number_of_edges()} 条边。", print_console=True)
+            
+            # 4. 创建并保存用于环路检测的简化图
+            simplified_graph = create_simplified_graph(final_graph)
+            save_final_graph(simplified_graph, SIMPLIFIED_GRAPH_PATH)
+            log_message(f"简化图已保存至 {SIMPLIFIED_GRAPH_PATH}", print_console=True)
     else:
         log_message("未能加载股东图，处理中止。", print_console=True)
         
