@@ -1,0 +1,5 @@
+pandas>=1.0.0
+networkx>=2.5
+python-louvain>=0.15
+pyvis>=0.3.2
+flask>=2.0.0 
