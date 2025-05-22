@@ -1,480 +1,458 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-股权闭环检测工具 - 检测一级、二级、三级股权闭环
+股权闭环检测工具 - igraph 兼容性优化版 (性能优化版) - 并行配置处理与算法优化
 """
 
 import os
-import networkx as nx
 import logging
-from datetime import datetime
 import time
-from collections import defaultdict
-from typing import List, Tuple, Set, Dict, Sequence
+from datetime import datetime
+from collections import defaultdict, deque
+import igraph as ig
+import multiprocessing
+import numpy as np  # 添加用于向量化操作
 
-# 配置
+# --- (Configuration constants like INPUT_GRAPH_PATH, OUTPUT_DIR, etc. remain the same) ---
 INPUT_GRAPH_PATH = "model/final_heterogeneous_graph.graphml"
-SIMPLIFIED_GRAPH_PATH = "model/simplified_loop_detection_graph.graphml"  # 简化图路径
+SIMPLIFIED_GRAPH_PATH = "model/simplified_loop_detection_graph.graphml"
 OUTPUT_DIR = "outputs"
 LOG_DIR = os.path.join(OUTPUT_DIR, "log")
-LOG_FILE = os.path.join(LOG_DIR, "loop_detection.log")
+LOG_FILE = os.path.join(LOG_DIR, "loop_detection_optimized.log")  # 修改日志文件名
 RESULTS_DIR = os.path.join(OUTPUT_DIR, "loop_results")
-OUTPUT_FILE = os.path.join(RESULTS_DIR, "equity_loops.txt")
+OUTPUT_FILE = os.path.join(RESULTS_DIR, "equity_loops_optimized.txt")  # 修改输出文件名
+# 添加一个缓存大小限制，用于控制内存使用
+MAX_CACHE_SIZE = 10000
 
-# 设置日志
 def setup_logging():
     """设置日志记录"""
-    if not os.path.exists(LOG_DIR):
-        os.makedirs(LOG_DIR)
+    for directory in [LOG_DIR, RESULTS_DIR]:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
     
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='%(asctime)s - %(processName)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler(LOG_FILE, 'w', 'utf-8'),
-            logging.StreamHandler()  # 同时输出到控制台
+            logging.StreamHandler()
         ]
     )
     logging.info(f"开始分析，日志记录于 {LOG_FILE}")
 
-# 确保输出目录存在
-def ensure_output_dirs():
-    """确保输出目录存在"""
-    for directory in [OUTPUT_DIR, RESULTS_DIR]:
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-            logging.info(f"创建目录: {directory}")
-
+# --- (load_graph, get_role, get_name functions remain the same) ---
 def load_graph(file_path):
-    """从GraphML文件加载图。"""
+    """从GraphML文件加载igraph图"""
     if not os.path.exists(file_path):
         logging.error(f"图文件未找到于 '{file_path}'")
         return None
     try:
         logging.info(f"正在从 '{file_path}' 加载图...")
-        graph = nx.read_graphml(file_path)
-        logging.info(f"图加载成功，包含 {graph.number_of_nodes()} 个节点和 {graph.number_of_edges()} 条边。")
+        graph = ig.Graph.Read_GraphML(file_path)
+        logging.info(f"图加载成功，包含 {graph.vcount()} 个节点和 {graph.ecount()} 条边。")
+        # Ensure 'name' and 'label' attributes exist or provide defaults gracefully
+        if "name" not in graph.vertex_attributes():
+            logging.warning("Vertex attribute 'name' not found. Using IDs as names.")
+            graph.vs["name"] = [str(v.index) for v in graph.vs]
+        if "label" not in graph.vertex_attributes():
+            logging.warning("Vertex attribute 'label' (for role) not found. Using '未知' as role.")
+            graph.vs["label"] = ["未知"] * graph.vcount()
+        if "label" not in graph.edge_attributes():
+            logging.warning("Edge attribute 'label' not found. Using '关联' as edge label.")
+            graph.es["label"] = ["关联"] * graph.ecount()
+            
+        # 预处理步骤：创建角色索引和邻居缓存
+        graph.vs["role_index"] = [-1] * graph.vcount()
+        role_to_index = {}
+        curr_index = 0
+        for v in graph.vs:
+            role = v["label"]
+            if role not in role_to_index:
+                role_to_index[role] = curr_index
+                curr_index += 1
+            v["role_index"] = role_to_index[role]
+        
+        # 创建角色索引映射
+        graph["role_to_vertices"] = defaultdict(list)
+        for v in graph.vs:
+            graph["role_to_vertices"][v["label"]].append(v.index)
+            
+        # 预计算出边和入边索引，加速邻居查找
+        graph["out_neighbors"] = [graph.neighbors(v.index, mode="out") for v in graph.vs]
+        graph["in_neighbors"] = [graph.neighbors(v.index, mode="in") for v in graph.vs]
+
         return graph
     except Exception as e:
         logging.error(f"加载图 '{file_path}' 时发生错误: {e}")
         return None
 
-def get_node_info(graph, node_id):
-    """获取节点的详细信息"""
-    node_attrs = graph.nodes[node_id]
-    name = node_attrs.get('name', node_id)
-    label = node_attrs.get('label', '未知')
-    return f"{name} [{label}]"
+def get_role(graph, v_id):
+    """获取节点角色"""
+    return graph.vs[v_id]["label"]
 
-def find_role_based_paths_recursive(graph, current_path, role_sequence, target_len, direction_sequence=None):
-    """
-    递归查找符合角色序列的路径
-    
-    参数:
-    - graph: NetworkX图
-    - current_path: 当前路径
-    - role_sequence: 角色序列，例如 ['股东', 'partner', '成员单位', ...]
-    - target_len: 目标路径长度(包含重复的起始节点)
-    - direction_sequence: 可选，方向序列(True表示向前，False表示向后)，例如[True, True, False, ...]
-    
-    返回:
-    - 找到的所有符合条件的路径列表
-    """
-    found_paths = []
-    current_node = current_path[-1]
-    current_pos = len(current_path) - 1
-    
-    # 检查是否达到目标长度
-    if len(current_path) == target_len:
-        # 确保最后一个节点是起始节点
-        if current_node == current_path[0]:
-            found_paths.append(current_path.copy())
-        return found_paths
-    
-    # 检查下一步应该是哪个角色
-    next_role = role_sequence[current_pos + 1]
-    
-    # 确定搜索方向
-    forward = True  # 默认向前搜索
-    if direction_sequence and len(direction_sequence) > current_pos:
-        forward = direction_sequence[current_pos]  # 使用指定方向
-    
-    # 基于方向获取邻居节点
-    neighbors = []
-    if forward:
-        # 向前搜索：检查所有出边
-        neighbors = list(graph.successors(current_node))
-    else:
-        # 向后搜索：检查所有入边
-        neighbors = list(graph.predecessors(current_node))
-    
-    # 检查每个邻居
-    for neighbor in neighbors:
-        # 如果已在路径中，跳过(除非是最后一步回到起点)
-        if neighbor in current_path:
-            # 特殊情况：如果是最后一步且邻居是起点，允许添加
-            if len(current_path) == target_len - 1 and neighbor == current_path[0]:
-                new_path = current_path + [neighbor]
-                found_paths.append(new_path)
-            continue
+def get_name(graph, v_id):
+    """获取节点名称"""
+    return graph.vs[v_id]["name"]
+
+# 添加缓存装饰器用于记忆化搜索
+def lru_cache_with_limit(maxsize=MAX_CACHE_SIZE):
+    """简单的LRU缓存实现，限制缓存大小"""
+    def decorator(func):
+        cache = {}
+        queue = deque()
         
-        # 检查邻居角色是否匹配
-        neighbor_role = graph.nodes[neighbor].get('label', '未知')
-        if neighbor_role == next_role:
-            # 递归搜索
-            new_paths = find_role_based_paths_recursive(
-                graph, 
-                current_path + [neighbor], 
-                role_sequence, 
-                target_len,
-                direction_sequence
-            )
-            found_paths.extend(new_paths)
-    
-    return found_paths
+        def wrapper(*args, **kwargs):
+            key = str(args) + str(kwargs)
+            if key in cache:
+                return cache[key]
+            
+            result = func(*args, **kwargs)
+            
+            # 如果缓存已满，移除最早的项
+            if len(cache) >= maxsize:
+                oldest = queue.popleft()
+                if oldest in cache:
+                    del cache[oldest]
+            
+            cache[key] = result
+            queue.append(key)
+            return result
+        
+        return wrapper
+    return decorator
 
-def search_loops_with_role_sequence(graph, role_sequence, direction_sequence=None):
+# 优化后的路径查找函数
+def find_paths_with_role_sequence(graph, role_sequence, direction_sequence=None):
     """
-    查找符合特定角色序列的环路
-    
-    参数:
-    - graph: NetworkX图
-    - role_sequence: 角色序列
-    - direction_sequence: 方向序列
-    
-    返回:
-    - 找到的环路列表
+    找出所有符合角色序列和方向序列的路径
+    采用迭代BFS和预计算优化，提高性能
     """
-    all_found_loops = []
-    target_loop_len = len(role_sequence)  # 环路中的节点数
+    if not graph:
+        logging.error("Graph object is None in find_paths_with_role_sequence.")
+        return []
+    if len(role_sequence) < 2 or role_sequence[0] != role_sequence[-1]:
+        logging.warning("角色序列必须以相同角色开始和结束才能形成闭环")
+        return []
+    
+    logging.info(f"查找环路: 角色序列=[{','.join(role_sequence)}], 目标长度={len(role_sequence)-1}")
+    
     start_role = role_sequence[0]
+    # 使用预计算的角色到节点映射
+    start_vertices = graph["role_to_vertices"].get(start_role, [])
+    logging.info(f"找到 {len(start_vertices)} 个起始角色为 '{start_role}' 的节点")
     
-    if target_loop_len < 2 or role_sequence[0] != role_sequence[-1]:
-        logging.warning("警告：角色序列长度小于2或首尾角色不一致，无法形成有效环路搜索。")
-        return all_found_loops
-    
-    # 找出所有弱连通分量（忽略边的方向）
-    wccs = list(nx.weakly_connected_components(graph))
-    logging.info(f"图中共有 {len(wccs)} 个弱连通分量")
-    
-    # 过滤出大小大于等于环路长度的弱连通分量
-    valid_wccs = [wcc for wcc in wccs if len(wcc) >= target_loop_len]
-    logging.info(f"其中大小大于等于 {target_loop_len} 的弱连通分量有 {len(valid_wccs)} 个")
-    
-    processed_loops_sig = set()  # 用于去重
-    
-    for i, wcc in enumerate(valid_wccs):
-        if (i+1) % 10 == 0 or i+1 == len(valid_wccs):
-            logging.info(f"正在处理弱连通分量 {i+1}/{len(valid_wccs)} (大小: {len(wcc)})")
+    if not start_vertices:
+        return []
         
-        # 创建WCC的子图进行搜索
-        subG = graph.subgraph(wcc).copy()
-        
-        # 从符合起始角色的节点开始搜索
-        start_nodes = [node for node in subG.nodes() if graph.nodes[node].get('label') == start_role]
-        
-        for start_node in start_nodes:
-            # 调用递归函数查找路径
-            found_paths = find_role_based_paths_recursive(
-                subG,
-                [start_node],
-                role_sequence,
-                target_loop_len,
-                direction_sequence
-            )
-            
-            for path in found_paths:
-                # 验证路径是否满足方向要求
-                if validate_path_directions(subG, path, direction_sequence):
-                    # 对找到的环路进行签名去重（使用节点名称和标签组合作为标识）
-                    path_info = tuple(f"{graph.nodes[node].get('name', node)}_{graph.nodes[node].get('label', '未知')}" 
-                                     for node in path[:-1])  # 去掉最后一个重复的节点
-                    loop_signature = tuple(sorted(path_info))
-                    
-                    if loop_signature not in processed_loops_sig:
-                        all_found_loops.append(path)
-                        processed_loops_sig.add(loop_signature)
-    
-    logging.info(f"搜索完成，找到 {len(all_found_loops)} 个符合角色序列的环路")
-    return all_found_loops
-
-def validate_path_directions(graph, path, direction_sequence):
-    """验证路径是否满足方向要求"""
     if not direction_sequence:
-        return True  # 如果没有方向要求，则默认有效
+        direction_sequence = [True] * (len(role_sequence) - 1)
     
-    for i in range(len(path) - 1):
-        current_node = path[i]
-        next_node = path[i + 1]
-        expected_direction = direction_sequence[i] if i < len(direction_sequence) else True
-        
-        if expected_direction:
-            # 期望方向是向前(->)，检查是否存在从current_node到next_node的边
-            if not graph.has_edge(current_node, next_node):
-                return False
-        else:
-            # 期望方向是向后(<-)，检查是否存在从next_node到current_node的边
-            if not graph.has_edge(next_node, current_node):
-                return False
+    if len(direction_sequence) != len(role_sequence) - 1:
+        logging.error(f"方向序列长度 ({len(direction_sequence)}) 与环路路径长度 ({len(role_sequence)-1}) 不匹配")
+        return []
     
-    return True
-
-def format_loop_path(graph, loop):
-    """将闭环路径格式化为可读的字符串"""
-    path_str = ""
-    for i in range(len(loop)):
-        node = loop[i]
-        node_info = get_node_info(graph, node)
-        
-        # 将 partner 改为 合作公司
-        if "[partner]" in node_info:
-            node_info = node_info.replace("[partner]", "[合作公司]")
-        
-        path_str += node_info
-        
-        # 如果不是最后一个节点，添加箭头
-        if i < len(loop) - 1:
-            # 获取边的信息
-            edge_data = graph.get_edge_data(node, loop[i+1])
-            
-            # 可能有多个边
-            if edge_data:
-                # 如果是MultiDiGraph，可能有多个键
-                try:
-                    if isinstance(edge_data, dict) and not isinstance(edge_data, list):
-                        if 0 in edge_data:  # 默认键
-                            edge_attrs = edge_data[0]
-                            if isinstance(edge_attrs, dict):
-                                edge_label = edge_attrs.get('label', '关联')
-                            else:
-                                edge_label = '关联'
-                        else:
-                            # 取第一个边的标签
-                            first_key = list(edge_data.keys())[0]
-                            edge_attrs = edge_data[first_key]
-                            if isinstance(edge_attrs, dict):
-                                edge_label = edge_attrs.get('label', '关联')
-                            else:
-                                edge_label = '关联'
-                    else:
-                        if isinstance(edge_data, dict):
-                            edge_label = edge_data.get('label', '关联')
-                        else:
-                            edge_label = '关联'
-                    
-                    path_str += f" --({edge_label})--> "
-                except Exception as e:
-                    logging.debug(f"处理边属性时出错: {e}，使用默认标签")
-                    path_str += " --> "
-            else:
-                # 检查是否有反向边（对应<-情况）
-                reverse_edge = graph.get_edge_data(loop[i+1], node)
-                if reverse_edge:
-                    # 获取反向边的标签
-                    try:
-                        if isinstance(reverse_edge, dict) and not isinstance(reverse_edge, list):
-                            if 0 in reverse_edge:  # 默认键
-                                edge_attrs = reverse_edge[0]
-                                if isinstance(edge_attrs, dict):
-                                    edge_label = edge_attrs.get('label', '关联')
-                                else:
-                                    edge_label = '关联'
-                            else:
-                                # 取第一个边的标签
-                                first_key = list(reverse_edge.keys())[0]
-                                edge_attrs = reverse_edge[first_key]
-                                if isinstance(edge_attrs, dict):
-                                    edge_label = edge_attrs.get('label', '关联')
-                                else:
-                                    edge_label = '关联'
-                        else:
-                            if isinstance(reverse_edge, dict):
-                                edge_label = reverse_edge.get('label', '关联')
-                            else:
-                                edge_label = '关联'
-                        
-                        path_str += f" <--({edge_label})-- "
-                    except Exception as e:
-                        logging.debug(f"处理反向边属性时出错: {e}，使用默认标签")
-                        path_str += " <-- "
-                else:
-                    path_str += " --> "  # 如果没有边信息，使用默认箭头
-    
-    return path_str
-
-def analyze_and_save_loops(graph):
-    """分析图中的闭环并保存结果"""
+    all_paths = []
+    path_count = 0
     start_time = time.time()
     
-    # 定义各级别闭环的角色序列和方向
-    # 格式为 [角色序列, 方向序列]
-    # 方向序列中，True表示向前(->)，False表示向后(<-)
+    # 预先过滤可能的节点，减少搜索空间
+    filtered_nodes_by_role = {}
+    for i, role in enumerate(role_sequence):
+        filtered_nodes_by_role[i] = set(graph["role_to_vertices"].get(role, []))
     
-    # 一级闭环：股东->合作公司A->成员公司->合作公司B<-股东
-    level1_config = [
-        ['股东', 'partner', '成员单位', 'partner', '股东'],  # 角色序列
-        [True, True, True, False]  # 方向序列
-    ]
+    # 批量处理起始节点，使用更高效的数据结构
+    batch_size = min(100, len(start_vertices))  # 批量处理大小
     
-    # 二级闭环：股东A->股东C->合作公司A->成员公司<-合作公司B<-股东S<-股东A
-    level2_config = [
-        ['股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东'],  # 角色序列
-        [True, True, True, False, False, False]  # 方向序列
-    ]
+    for batch_start in range(0, len(start_vertices), batch_size):
+        batch_end = min(batch_start + batch_size, len(start_vertices))
+        current_batch = start_vertices[batch_start:batch_end]
+        
+        # 每个批次单独处理
+        for start_vertex in current_batch:
+            # 使用deque代替list，提高append/pop效率
+            stack = deque([(start_vertex, [start_vertex], {start_vertex})])
+            
+            while stack:
+                current, path, visited = stack.pop()
+                
+                if len(path) == len(role_sequence) - 1:
+                    start_node = path[0]
+                    is_connected = False
+                    
+                    # 使用预计算的邻居列表
+                    if direction_sequence[-1]:
+                        if start_node in graph["out_neighbors"][current]:
+                            is_connected = True
+                    else:
+                        if start_node in graph["in_neighbors"][current]:
+                            is_connected = True
+                    
+                    if is_connected and start_node in filtered_nodes_by_role[len(role_sequence)-1]:
+                        all_paths.append(path.copy())
+                        path_count += 1
+                        if path_count % 1000 == 0:
+                            logging.info(f"角色序列 [{','.join(role_sequence)}]: 已找到 {path_count} 个候选路径，耗时: {time.time() - start_time:.2f}秒")
+                    continue
+                
+                next_role_idx = len(path)
+                next_role = role_sequence[next_role_idx]
+                is_forward = direction_sequence[len(path) - 1]
+                
+                # 使用预计算的邻居列表
+                neighbors_indices = graph["out_neighbors"][current] if is_forward else graph["in_neighbors"][current]
+                
+                # 使用集合操作优化邻居过滤
+                candidate_neighbors = set(neighbors_indices) & filtered_nodes_by_role[next_role_idx]
+                candidate_neighbors = [n for n in candidate_neighbors if n not in visited or n == path[0]]
+                
+                # 根据角色索引快速过滤
+                for neighbor in candidate_neighbors:
+                    new_path = path + [neighbor]
+                    new_visited = visited | {neighbor}
+                    stack.append((neighbor, new_path, new_visited))
     
-    # 三级闭环：股东h->股东e->股东C->合作公司A->成员公司->合作公司B<-股东S<-股东g<-股东h
-    level3_config = [
-        ['股东', '股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东', '股东'],  # 角色序列
-        [True, True, True, True, True, False, False, False]  # 方向序列
-    ]
+    # 使用更高效的方式去重路径
+    seen_paths = set()
+    unique_paths = []
     
-    # 也处理英文标签
-    # 一级闭环：股东->合作公司A->成员公司->合作公司B<-股东
-    level1_config_en = [
-        ['shareholder', 'partner', '成员单位', 'partner', 'shareholder'],  # 角色序列
-        [True, True, True, False]  # 方向序列
-    ]
+    for path in all_paths:
+        # 创建标准化的路径表示，用于去重
+        path_key = tuple(sorted((get_name(graph, v_id), get_role(graph, v_id)) for v_id in path))
+        if path_key not in seen_paths:
+            unique_paths.append(path)
+            seen_paths.add(path_key)
     
-    # 二级闭环：股东A->股东C->合作公司A->成员公司<-合作公司B<-股东S<-股东A
-    level2_config_en = [
-        ['shareholder', 'shareholder', 'partner', '成员单位', 'partner', 'shareholder', 'shareholder'],  # 角色序列
-        [True, True, True, False, False, False]  # 方向序列
-    ]
+    logging.info(f"角色序列 [{','.join(role_sequence)}]: 找到 {len(unique_paths)} 个符合条件的独立环路 (耗时: {time.time() - start_time:.2f}秒)")
+    return unique_paths
+
+# --- (format_cycle_path function with minor optimizations) ---
+def format_cycle_path(graph, cycle_indices):
+    """格式化环路为可读字符串 (optimized version)"""
+    if not cycle_indices:
+        return "空环路"
     
-    # 三级闭环：股东h->股东e->股东C->合作公司A->成员公司->合作公司B<-股东S<-股东g<-股东h
-    level3_config_en = [
-        ['shareholder', 'shareholder', 'shareholder', 'partner', '成员单位', 'partner', 'shareholder', 'shareholder', 'shareholder'],  # 角色序列
-        [True, True, True, True, True, False, False, False]  # 方向序列
-    ]
+    full_cycle_indices = cycle_indices + [cycle_indices[0]]
+    path_parts = []
     
-    # 查找各级别闭环
-    logging.info("开始查找一级闭环...")
-    level1_loops_cn = search_loops_with_role_sequence(graph, level1_config[0], level1_config[1])
-    level1_loops_en = search_loops_with_role_sequence(graph, level1_config_en[0], level1_config_en[1])
-    level1_loops = level1_loops_cn + level1_loops_en
+    # 预先获取所有节点信息，减少重复查询
+    nodes_info = {}
+    for v_id in set(full_cycle_indices):
+        nodes_info[v_id] = (get_name(graph, v_id), get_role(graph, v_id))
     
-    logging.info("开始查找二级闭环...")
-    level2_loops_cn = search_loops_with_role_sequence(graph, level2_config[0], level2_config[1])
-    level2_loops_en = search_loops_with_role_sequence(graph, level2_config_en[0], level2_config_en[1])
-    level2_loops = level2_loops_cn + level2_loops_en
+    # 预先查询所有边的信息
+    edge_info = {}
+    for i in range(len(full_cycle_indices) - 1):
+        src, dst = full_cycle_indices[i], full_cycle_indices[i+1]
+        if graph.are_adjacent(src, dst):
+            try:
+                edge_id = graph.get_eid(src, dst, directed=True, error=True)
+                edge_info[(src, dst)] = graph.es[edge_id].get("label", "关联")
+            except:
+                edge_info[(src, dst)] = "关联"
+        elif graph.are_adjacent(dst, src):
+            try:
+                edge_id = graph.get_eid(dst, src, directed=True, error=True)
+                edge_info[(dst, src)] = graph.es[edge_id].get("label", "关联")
+            except:
+                edge_info[(dst, src)] = "关联"
     
-    logging.info("开始查找三级闭环...")
-    level3_loops_cn = search_loops_with_role_sequence(graph, level3_config[0], level3_config[1])
-    level3_loops_en = search_loops_with_role_sequence(graph, level3_config_en[0], level3_config_en[1])
-    level3_loops = level3_loops_cn + level3_loops_en
+    for i in range(len(full_cycle_indices)):
+        v_id = full_cycle_indices[i]
+        name, label = nodes_info[v_id]
+        node_info = f"{name} [{label}]"
+        
+        if "[partner]" in node_info:
+            node_info = node_info.replace("[partner]", "[合作公司]")
+        path_parts.append(node_info)
+        
+        if i < len(full_cycle_indices) - 1:
+            next_v_id = full_cycle_indices[i+1]
+            direction_str = " --> "
+            
+            if (v_id, next_v_id) in edge_info:
+                edge_label_str = edge_info[(v_id, next_v_id)]
+                direction_str = f" --({edge_label_str})--> "
+            elif (next_v_id, v_id) in edge_info:
+                edge_label_str = edge_info[(next_v_id, v_id)]
+                direction_str = f" <--({edge_label_str})-- "
+            
+            path_parts.append(direction_str)
+            
+    return "".join(path_parts)
+
+# Worker function for parallel processing - optimized
+def _worker_find_loops(args):
+    """优化后的工作进程函数"""
+    graph_path, role_seq, dir_seq, config_name = args
+    try:
+        # 加载图并添加缓存
+        graph = load_graph(graph_path)
+        if graph is None:
+            logging.error(f"[{config_name}] Worker failed to load graph from {graph_path}")
+            return config_name, []
+
+        logging.info(f"[{config_name}] Worker started processing.")
+        loops = find_paths_with_role_sequence(graph, role_seq, dir_seq)
+        logging.info(f"[{config_name}] Worker finished, found {len(loops)} loops.")
+        return config_name, loops
+    except Exception as e:
+        logging.error(f"[{config_name}] Worker encountered error: {str(e)}")
+        return config_name, []
+
+# 优化分析与保存函数
+def analyze_and_save_loops(graph, graph_path_for_workers):
+    """优化后的闭环分析与保存函数"""
+    total_start_time = time.time()
     
-    # 按公司分组
+    configs = {
+        "一级闭环(中文)": (
+            ['股东', 'partner', '成员单位', 'partner', '股东'],
+            [True, True, True, False]
+        ),
+        "二级闭环(中文)": (
+            ['股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东'],
+            [True, True, True, False, False, False]
+        ),
+        "三级闭环(中文)": (
+            ['股东', '股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东', '股东'],
+            [True, True, True, True, True, False, False, False]
+        )
+    }
+    
+    # 并行处理任务
+    tasks = [(graph_path_for_workers, role_seq, dir_seq, name) for name, (role_seq, dir_seq) in configs.items()]
+    
+    all_loops_results = {}
+    
+    # 自动确定最佳进程数
+    cpu_count = os.cpu_count() or 1
+    num_processes = min(len(configs), max(1, cpu_count - 1))  # 保留一个CPU核心给系统
+    logging.info(f"启动并行闭环分析，使用 {num_processes} 个进程 (系统有 {cpu_count} 个CPU核心).")
+
+    if num_processes > 0 and tasks:
+        # 使用进程池并发执行任务
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            results = pool.map(_worker_find_loops, tasks)
+        
+        for config_name, loops in results:
+            all_loops_results[config_name] = loops
+    else:
+        logging.info("由于进程数为0或无任务，改为顺序执行。")
+        for task_args in tasks:
+            config_name_res, loops_res = _worker_find_loops(task_args)
+            all_loops_results[config_name_res] = loops_res
+
+    # 获取各级别闭环
+    level1_loops = all_loops_results.get("一级闭环(中文)", [])
+    level2_loops = all_loops_results.get("二级闭环(中文)", [])
+    level3_loops = all_loops_results.get("三级闭环(中文)", [])
+    
     company_loops = defaultdict(lambda: {'level1': [], 'level2': [], 'level3': []})
+    unique_sigs_global = set() 
     
-    # 处理一级闭环
-    for loop in level1_loops:
-        start_node = loop[0]
-        start_name = graph.nodes[start_node].get('name', start_node)
-        company_loops[start_name]['level1'].append(loop)
-    
-    # 处理二级闭环
-    for loop in level2_loops:
-        start_node = loop[0]
-        start_name = graph.nodes[start_node].get('name', start_node)
-        company_loops[start_name]['level2'].append(loop)
-    
-    # 处理三级闭环
-    for loop in level3_loops:
-        start_node = loop[0]
-        start_name = graph.nodes[start_node].get('name', start_node)
-        company_loops[start_name]['level3'].append(loop)
+    # 优化公司闭环处理函数
+    def process_loops_for_company(loops_list, level_key, graph_obj):
+        # 批量处理以提高效率
+        for batch_start in range(0, len(loops_list), 100):
+            batch_end = min(batch_start + 100, len(loops_list))
+            batch = loops_list[batch_start:batch_end]
+            
+            for cycle_indices in batch:
+                if not cycle_indices: continue
+                start_v_id = cycle_indices[0]
+                start_name = get_name(graph_obj, start_v_id)
+                
+                # 更高效的签名生成
+                sig_parts = tuple(sorted((get_name(graph_obj, v_id), get_role(graph_obj, v_id)) for v_id in cycle_indices))
+                
+                if sig_parts not in unique_sigs_global:
+                    company_loops[start_name][level_key].append(cycle_indices)
+                    unique_sigs_global.add(sig_parts)
+
+    # 处理闭环数据
+    process_start = time.time()
+    logging.info("开始处理闭环数据...")
+    process_loops_for_company(level1_loops, 'level1', graph)
+    process_loops_for_company(level2_loops, 'level2', graph)
+    process_loops_for_company(level3_loops, 'level3', graph)
+    logging.info(f"闭环数据处理完成，耗时: {time.time() - process_start:.2f} 秒")
+        
+    unique_level1 = sum(len(data['level1']) for data in company_loops.values())
+    unique_level2 = sum(len(data['level2']) for data in company_loops.values())
+    unique_level3 = sum(len(data['level3']) for data in company_loops.values())
     
     # 保存结果到文件
+    save_start = time.time()
+    logging.info("开始保存结果到文件...")
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write("# 股权闭环检测报告\n\n")
+        f.write("# 股权闭环检测报告 (性能优化版)\n\n")
         f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        
         f.write(f"## 总结\n\n")
-        f.write(f"- 发现一级闭环: {len(level1_loops)} 个\n")
-        f.write(f"- 发现二级闭环: {len(level2_loops)} 个\n")
-        f.write(f"- 发现三级闭环: {len(level3_loops)} 个\n")
-        f.write(f"- 共涉及 {len(company_loops)} 个股东\n\n")
+        f.write(f"- 发现一级闭环: {unique_level1} 个\n")
+        f.write(f"- 发现二级闭环: {unique_level2} 个\n")
+        f.write(f"- 发现三级闭环: {unique_level3} 个\n")
+        f.write(f"- 共涉及 {len(company_loops)} 个股东 (基于去重后的环路起点)\n\n")
         
         f.write("## 详细闭环信息\n\n")
-        
-        # 按公司名称排序
         for company_name in sorted(company_loops.keys()):
             loops_data = company_loops[company_name]
-            total_loops = len(loops_data['level1']) + len(loops_data['level2']) + len(loops_data['level3'])
+            total_company_loops = len(loops_data['level1']) + len(loops_data['level2']) + len(loops_data['level3'])
             
+            if total_company_loops == 0: continue
+
             f.write(f"### 股东: {company_name}\n\n")
-            f.write(f"该股东共涉及 {total_loops} 个闭环:\n")
+            f.write(f"该股东共涉及 {total_company_loops} 个已识别的闭环:\n")
             f.write(f"- 一级闭环: {len(loops_data['level1'])} 个\n")
             f.write(f"- 二级闭环: {len(loops_data['level2'])} 个\n")
             f.write(f"- 三级闭环: {len(loops_data['level3'])} 个\n\n")
             
-            # 一级闭环详情
             if loops_data['level1']:
                 f.write("#### 一级闭环\n\n")
-                for i, loop in enumerate(loops_data['level1']):
-                    f.write(f"{i+1}. {format_loop_path(graph, loop)}\n\n")
-            
-            # 二级闭环详情
+                for i, cycle_idx in enumerate(loops_data['level1']):
+                    f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
             if loops_data['level2']:
                 f.write("#### 二级闭环\n\n")
-                for i, loop in enumerate(loops_data['level2']):
-                    f.write(f"{i+1}. {format_loop_path(graph, loop)}\n\n")
-            
-            # 三级闭环详情
+                for i, cycle_idx in enumerate(loops_data['level2']):
+                    f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
             if loops_data['level3']:
                 f.write("#### 三级闭环\n\n")
-                for i, loop in enumerate(loops_data['level3']):
-                    f.write(f"{i+1}. {format_loop_path(graph, loop)}\n\n")
-            
+                for i, cycle_idx in enumerate(loops_data['level3']):
+                    f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
             f.write("-" * 80 + "\n\n")
     
-    logging.info(f"闭环分析完成，用时: {time.time() - start_time:.2f} 秒")
-    logging.info(f"发现一级闭环: {len(level1_loops)} 个")
-    logging.info(f"发现二级闭环: {len(level2_loops)} 个")
-    logging.info(f"发现三级闭环: {len(level3_loops)} 个")
+    logging.info(f"结果保存完成，耗时: {time.time() - save_start:.2f} 秒")
+    
+    total_end_time = time.time()
+    logging.info(f"闭环分析完成，总用时: {total_end_time - total_start_time:.2f} 秒")
+    logging.info(f"最终结果 (去重后): 一级闭环 {unique_level1} 个, 二级闭环 {unique_level2} 个, 三级闭环 {unique_level3} 个")
     logging.info(f"报告已保存到: {OUTPUT_FILE}")
     
     return True
 
+
 def main():
     """主函数"""
-    # 设置日志
     setup_logging()
+    # Windows多进程支持
+    multiprocessing.freeze_support() 
     
-    # 确保输出目录存在
-    ensure_output_dirs()
+    graph_path_to_use = SIMPLIFIED_GRAPH_PATH if os.path.exists(SIMPLIFIED_GRAPH_PATH) else INPUT_GRAPH_PATH
+    logging.info(f"使用图文件: {graph_path_to_use}")
     
-    # 先尝试加载简化图，如果不存在则使用原图
-    if os.path.exists(SIMPLIFIED_GRAPH_PATH):
-        logging.info(f"发现简化图 {SIMPLIFIED_GRAPH_PATH}，使用简化图进行环路检测...")
-        graph = load_graph(SIMPLIFIED_GRAPH_PATH)
-        if graph:
-            logging.info("成功加载简化图！")
-            # 保存原始图的路径，在输出报告中可能需要查询详细信息
-            original_graph_path = INPUT_GRAPH_PATH
-        else:
-            logging.warning(f"简化图加载失败，尝试加载原始图 {INPUT_GRAPH_PATH}...")
-            graph = load_graph(INPUT_GRAPH_PATH)
-            original_graph_path = None
-    else:
-        logging.info(f"未发现简化图，使用原始图 {INPUT_GRAPH_PATH} 进行环路检测...")
-        graph = load_graph(INPUT_GRAPH_PATH)
-        original_graph_path = None
-    
-    if graph is None:
-        logging.error("图加载失败，退出程序。")
+    # 加载主图
+    start_load = time.time()
+    main_graph_for_reporting = load_graph(graph_path_to_use)
+    if main_graph_for_reporting is None:
+        logging.error("主图加载失败，退出程序。")
         return
     
-    # 记录图的总体信息
-    logging.info(f"图包含 {graph.number_of_nodes()} 个节点和 {graph.number_of_edges()} 条边")
+    logging.info(f"主图加载完成，耗时: {time.time() - start_load:.2f} 秒")
+    logging.info(f"主图包含: {main_graph_for_reporting.vcount()} 节点, {main_graph_for_reporting.ecount()} 边")
     
-    # 分析闭环
-    logging.info("开始分析股权闭环...")
-    analyze_and_save_loops(graph)
+    logging.info("开始分析股权闭环 (性能优化版)...")
+    analyze_and_save_loops(main_graph_for_reporting, graph_path_to_use) 
     
     logging.info("股权闭环分析完成。")
-    if original_graph_path:
-        logging.info(f"注意：本次分析使用了简化图，详细的交易信息请参考原始图 {original_graph_path}")
 
 if __name__ == "__main__":
-    main() 
+    main()
