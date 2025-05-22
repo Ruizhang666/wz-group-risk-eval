@@ -1,16 +1,16 @@
-2025-05-22 10:21:17,700 - MainProcess - INFO - 开始分析，日志记录于 outputs/log/loop_detection_optimized.log
-2025-05-22 10:21:17,700 - MainProcess - INFO - 使用图文件: model/simplified_loop_detection_graph.graphml
-2025-05-22 10:21:17,700 - MainProcess - INFO - 正在从 'model/simplified_loop_detection_graph.graphml' 加载图...
-2025-05-22 10:21:17,838 - MainProcess - INFO - 图加载成功，包含 22908 个节点和 30189 条边。
-2025-05-22 10:21:17,898 - MainProcess - INFO - 主图加载完成，耗时: 0.20 秒
-2025-05-22 10:21:17,898 - MainProcess - INFO - 主图包含: 22908 节点, 30189 边
-2025-05-22 10:21:17,898 - MainProcess - INFO - 开始分析股权闭环 (性能优化版)...
-2025-05-22 10:21:17,898 - MainProcess - INFO - 启动并行闭环分析，使用 3 个进程 (系统有 14 个CPU核心).
-2025-05-22 10:22:00,681 - MainProcess - INFO - 开始处理闭环数据...
-2025-05-22 10:22:00,813 - MainProcess - INFO - 闭环数据处理完成，耗时: 0.13 秒
-2025-05-22 10:22:00,813 - MainProcess - INFO - 开始保存结果到文件...
-2025-05-22 10:22:01,083 - MainProcess - INFO - 结果保存完成，耗时: 0.27 秒
-2025-05-22 10:22:01,083 - MainProcess - INFO - 闭环分析完成，总用时: 43.19 秒
-2025-05-22 10:22:01,083 - MainProcess - INFO - 最终结果 (去重后): 一级闭环 404 个, 二级闭环 1400 个, 三级闭环 10265 个
-2025-05-22 10:22:01,083 - MainProcess - INFO - 报告已保存到: outputs/loop_results/equity_loops_optimized.txt
-2025-05-22 10:22:01,086 - MainProcess - INFO - 股权闭环分析完成。
+2025-05-22 12:58:32,762 - MainProcess - INFO - 开始分析，日志记录于 outputs/log/loop_detection_optimized.log
+2025-05-22 12:58:32,763 - MainProcess - INFO - 使用图文件: model/simplified_loop_detection_graph.graphml
+2025-05-22 12:58:32,763 - MainProcess - INFO - 正在从 'model/simplified_loop_detection_graph.graphml' 加载图...
+2025-05-22 12:58:32,901 - MainProcess - INFO - 图加载成功，包含 22908 个节点和 30189 条边。
+2025-05-22 12:58:32,959 - MainProcess - INFO - 主图加载完成，耗时: 0.20 秒
+2025-05-22 12:58:32,959 - MainProcess - INFO - 主图包含: 22908 节点, 30189 边
+2025-05-22 12:58:32,959 - MainProcess - INFO - 开始分析股权闭环 (性能优化版)...
+2025-05-22 12:58:32,959 - MainProcess - INFO - 启动并行闭环分析，使用 3 个进程 (系统有 14 个CPU核心).
+2025-05-22 12:59:14,742 - MainProcess - INFO - 开始处理闭环数据...
+2025-05-22 12:59:14,871 - MainProcess - INFO - 闭环数据处理完成，耗时: 0.13 秒
+2025-05-22 12:59:14,871 - MainProcess - INFO - 开始保存结果到文件...
+2025-05-22 12:59:15,145 - MainProcess - INFO - 结果保存完成，耗时: 0.27 秒
+2025-05-22 12:59:15,145 - MainProcess - INFO - 闭环分析完成，总用时: 42.19 秒
+2025-05-22 12:59:15,145 - MainProcess - INFO - 最终结果 (去重后): 一级闭环 404 个, 二级闭环 1400 个, 三级闭环 10265 个
+2025-05-22 12:59:15,145 - MainProcess - INFO - 报告已保存到: outputs/loop_results/equity_loops_optimized.txt
+2025-05-22 12:59:15,148 - MainProcess - INFO - 股权闭环分析完成。

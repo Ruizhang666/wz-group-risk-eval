@@ -51,6 +51,22 @@ def _normalize_percent(value):
     # print(f"GraphBuilder Warn: Unhandled percent value type: {value} (type: {type(value)}), treating as None.")
     return None # 其他未处理的类型
 
+# 新增函数：检查是否应该添加边
+def _should_add_edge(graph, source, target, edge_attrs):
+    """
+    检查是否应该在给定的source和target之间添加边。
+    规则简化为：
+    1. 每个方向最多只能有一条边
+    2. 两个节点之间最多只有两条边（一条A->B，一条B->A）
+    """
+    # 检查source->target方向是否已有边
+    forward_edges = graph.get_edge_data(source, target)
+    if forward_edges:  # 如果已经存在从source到target的边
+        return False  # 同方向已有边，不再添加
+    
+    # source->target方向没有边，可以添加
+    return True
+
 # 辅助函数，用于递归解析children字段并添加节点和边
 def _parse_children_recursive(main_row_entity_id, children_data, graph, level_0_ids): # Added level_0_ids
     if isinstance(children_data, str):
@@ -143,8 +159,10 @@ def _parse_children_recursive(main_row_entity_id, children_data, graph, level_0_
             'source_info': 'children_field',
             'label': '控股' # 新增：为边添加 '控股' 标签
         }
-        # 修改：移除边存在性检查，直接添加边
-        graph.add_edge(shareholder_node_id, main_row_entity_id, **edge_attrs)
+        
+        # 修改：使用_should_add_edge函数检查是否应该添加边
+        if _should_add_edge(graph, shareholder_node_id, main_row_entity_id, edge_attrs):
+            graph.add_edge(shareholder_node_id, main_row_entity_id, **edge_attrs)
 
         # 递归处理孙子节点 (即当前股东的股东)
         # main_row_entity_id for the recursive call will be the current shareholder_node_id
@@ -243,8 +261,9 @@ def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
                          G.nodes[parent_id_val]['label'] = '股东'
 
                 # MODIFIED EDGE DIRECTION HERE: current_node_id (Child) -> parent_id_val (Parent)
-                # 修改：移除边存在性检查，直接添加边
-                G.add_edge(current_node_id, parent_id_val, **edge_attrs)
+                # 修改：使用_should_add_edge函数检查是否应该添加边
+                if _should_add_edge(G, current_node_id, parent_id_val, edge_attrs):
+                    G.add_edge(current_node_id, parent_id_val, **edge_attrs)
     
     # 第二遍：处理children字段，补充可能的节点和边
     # shareholder_in_children_json -> current_node_id
@@ -290,6 +309,32 @@ def build_graph(csv_path='data/三层股权穿透输出数据.csv'):
                 v_type = G.nodes[v].get('label', '未知')
                 print(f"  {u_name} [{u_type}] -> {v_name} [{v_type}]: {count} edges")
                 shown += 1
+    
+    # 新增：打印有两条边的节点对的详细边属性
+    if parallel_edge_pairs:
+        print("\nGraphBuilder: 详细显示有两条边的节点对及其边属性:")
+        shown_pairs = 0
+        for (u, v), count in sorted(parallel_edge_pairs.items(), key=lambda x: x[1], reverse=True):
+            if count == 2 and shown_pairs < 10:  # 只显示恰好有两条边的节点对，最多10个
+                u_name = G.nodes[u].get('name', u)
+                v_name = G.nodes[v].get('name', v)
+                u_type = G.nodes[u].get('label', '未知')
+                v_type = G.nodes[v].get('label', '未知')
+                
+                print(f"\n节点对 {shown_pairs+1}: {u_name} [{u_type}] -> {v_name} [{v_type}]")
+                
+                # 获取两个节点之间的所有边
+                edges_data = G.get_edge_data(u, v)
+                for key, data in edges_data.items():
+                    percent_value = data.get('percent', '未知')
+                    if isinstance(percent_value, float):
+                        percent_display = f"{percent_value*100:.2f}%"
+                    else:
+                        percent_display = str(percent_value)
+                    
+                    print(f"  边 {key}: 百分比={percent_display}, 金额={data.get('amount', '未知')}, 来源={data.get('source_info', '未知')}")
+                
+                shown_pairs += 1
     
     # 统计带标签的节点和边
     shareholder_nodes_count = 0
