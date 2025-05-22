@@ -24,6 +24,12 @@ OUTPUT_FILE = os.path.join(RESULTS_DIR, "equity_loops_optimized.txt")  # 修改�
 # 添加一个缓存大小限制，用于控制内存使用
 MAX_CACHE_SIZE = 10000
 
+# ===== 用户可配置参数 =====
+# 设置要分析的节点数，如果为None则分析所有节点数的环路
+# 可选值: 4, 5, 6, 7, 8 或 None (分析所有环路)
+NODE_COUNT = None  # 在这里修改要分析的节点数，例如: NODE_COUNT = 6
+# ========================
+
 def setup_logging():
     """设置日志记录"""
     for directory in [LOG_DIR, RESULTS_DIR]:
@@ -299,25 +305,108 @@ def _worker_find_loops(args):
         logging.error(f"[{config_name}] Worker encountered error: {str(e)}")
         return config_name, []
 
-# 优化分析与保存函数
-def analyze_and_save_loops(graph, graph_path_for_workers):
-    """优化后的闭环分析与保存函数"""
-    total_start_time = time.time()
-    
-    configs = {
-        "一级闭环(中文)": (
+# 创建所有支持的环路配置
+def get_all_loop_configs():
+    """返回所有支持的环路配置"""
+    return {
+        "4节点环路": (
             ['股东', 'partner', '成员单位', 'partner', '股东'],
             [True, True, True, False]
         ),
-        "二级闭环(中文)": (
+        "6节点环路": (
             ['股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东'],
             [True, True, True, False, False, False]
         ),
-        "三级闭环(中文)": (
+        "8节点环路": (
             ['股东', '股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东', '股东'],
             [True, True, True, True, True, False, False, False]
+        ),
+        # 新增环路配置
+        "7节点环路(类型1)": (
+            ['股东', '股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东'],
+            [True, True, True, True, True, False, False]
+        ),
+        "6节点环路(类型2)": (
+            ['股东', '股东', '股东', 'partner', '成员单位', 'partner', '股东'],
+            [True, True, True, True, True, False]
+        ),
+        "7节点环路(类型2)": (
+            ['股东', '股东', 'partner', '成员单位', 'partner', '股东', '股东', '股东'],
+            [True, True, True, True, False, False, False]
+        ),
+        "6节点环路(类型3)": (
+            ['股东', 'partner', '成员单位', 'partner', '股东', '股东', '股东'],
+            [True, True, True, False, False, False]
+        ),
+        "5节点环路(类型1)": (
+            ['股东', '股东', 'partner', '成员单位', 'partner', '股东'],
+            [True, True, True, True, False]
+        ),
+        "5节点环路(类型2)": (
+            ['股东', 'partner', '成员单位', 'partner', '股东', '股东'],
+            [True, True, True, False, False]
         )
     }
+
+# 筛选特定节点数的环路配置
+def filter_configs_by_node_count(configs, n=None):
+    """
+    根据节点数筛选环路配置
+    
+    参数:
+        configs: 所有环路配置字典
+        n: 节点数，如果为None则返回所有配置
+        
+    返回:
+        筛选后的配置字典
+    """
+    if n is None:
+        return configs
+    
+    filtered_configs = {}
+    for name, (role_seq, dir_seq) in configs.items():
+        # 节点数为角色序列长度减1（因为首尾是同一个节点）
+        node_count = len(role_seq) - 1
+        if node_count == n or (str(n) in name and "节点环路" in name):
+            filtered_configs[name] = (role_seq, dir_seq)
+    
+    if not filtered_configs:
+        logging.warning(f"未找到节点数为 {n} 的环路配置，将使用所有配置")
+        return configs
+        
+    return filtered_configs
+
+# 优化分析与保存函数
+def analyze_and_save_loops(graph, graph_path_for_workers, n=None, output_file=None):
+    """
+    优化后的闭环分析与保存函数
+    
+    参数:
+        graph: 图对象
+        graph_path_for_workers: 图文件路径，用于并行处理
+        n: 节点数，只分析并输出特定节点数的环路，如果为None则分析所有环路
+        output_file: 输出文件路径，如果为None则使用默认路径
+    
+    返回:
+        分析是否成功的布尔值
+    """
+    total_start_time = time.time()
+    
+    # 如果未指定输出文件，使用默认文件
+    if output_file is None:
+        output_file = OUTPUT_FILE
+        if n is not None:
+            # 如果指定了节点数，则修改输出文件名
+            filename, ext = os.path.splitext(OUTPUT_FILE)
+            output_file = f"{filename}_{n}nodes{ext}"
+    
+    # 获取所有环路配置
+    all_configs = get_all_loop_configs()
+    
+    # 根据节点数筛选配置
+    configs = filter_configs_by_node_count(all_configs, n)
+    
+    logging.info(f"使用 {len(configs)} 个环路配置进行分析" + (f" (节点数: {n})" if n else ""))
     
     # 并行处理任务
     tasks = [(graph_path_for_workers, role_seq, dir_seq, name) for name, (role_seq, dir_seq) in configs.items()]
@@ -342,12 +431,14 @@ def analyze_and_save_loops(graph, graph_path_for_workers):
             config_name_res, loops_res = _worker_find_loops(task_args)
             all_loops_results[config_name_res] = loops_res
 
-    # 获取各级别闭环
-    level1_loops = all_loops_results.get("一级闭环(中文)", [])
-    level2_loops = all_loops_results.get("二级闭环(中文)", [])
-    level3_loops = all_loops_results.get("三级闭环(中文)", [])
+    # 创建环路类型到键的映射
+    loops_by_type = {}
+    for config_name in configs.keys():
+        key = config_name.replace("节点环路", "").replace("(", "_").replace(")", "").replace("类型", "type")
+        key = "node" + key
+        loops_by_type[key] = all_loops_results.get(config_name, [])
     
-    company_loops = defaultdict(lambda: {'level1': [], 'level2': [], 'level3': []})
+    company_loops = defaultdict(lambda: {key: [] for key in loops_by_type.keys()})
     unique_sigs_global = set() 
     
     # 优化公司闭环处理函数
@@ -372,63 +463,67 @@ def analyze_and_save_loops(graph, graph_path_for_workers):
     # 处理闭环数据
     process_start = time.time()
     logging.info("开始处理闭环数据...")
-    process_loops_for_company(level1_loops, 'level1', graph)
-    process_loops_for_company(level2_loops, 'level2', graph)
-    process_loops_for_company(level3_loops, 'level3', graph)
+    for loop_type, loops in loops_by_type.items():
+        process_loops_for_company(loops, loop_type, graph)
     logging.info(f"闭环数据处理完成，耗时: {time.time() - process_start:.2f} 秒")
-        
-    unique_level1 = sum(len(data['level1']) for data in company_loops.values())
-    unique_level2 = sum(len(data['level2']) for data in company_loops.values())
-    unique_level3 = sum(len(data['level3']) for data in company_loops.values())
+    
+    # 统计各类型环路数量
+    loop_counts = {loop_type: sum(len(data[loop_type]) for data in company_loops.values()) 
+                 for loop_type in loops_by_type.keys()}
+    
+    # 创建显示名称映射
+    display_names = {}
+    for config_name in configs.keys():
+        key = config_name.replace("节点环路", "").replace("(", "_").replace(")", "").replace("类型", "type")
+        key = "node" + key
+        display_names[key] = config_name
     
     # 保存结果到文件
     save_start = time.time()
-    logging.info("开始保存结果到文件...")
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write("# 股权闭环检测报告 (性能优化版)\n\n")
+    logging.info(f"开始保存结果到文件: {output_file}...")
+    with open(output_file, 'w', encoding='utf-8') as f:
+        title_suffix = f"({n}节点)" if n else "(扩展版)"
+        f.write(f"# 股权闭环检测报告 {title_suffix}\n\n")
         f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         f.write(f"## 总结\n\n")
-        f.write(f"- 发现一级闭环: {unique_level1} 个\n")
-        f.write(f"- 发现二级闭环: {unique_level2} 个\n")
-        f.write(f"- 发现三级闭环: {unique_level3} 个\n")
+        
+        for loop_type in loops_by_type.keys():
+            f.write(f"- 发现{display_names[loop_type]}: {loop_counts[loop_type]} 个\n")
+        
         f.write(f"- 共涉及 {len(company_loops)} 个股东 (基于去重后的环路起点)\n\n")
         
         f.write("## 详细闭环信息\n\n")
         for company_name in sorted(company_loops.keys()):
             loops_data = company_loops[company_name]
-            total_company_loops = len(loops_data['level1']) + len(loops_data['level2']) + len(loops_data['level3'])
+            total_company_loops = sum(len(loops_data[loop_type]) for loop_type in loops_by_type.keys())
             
             if total_company_loops == 0: continue
 
             f.write(f"### 股东: {company_name}\n\n")
             f.write(f"该股东共涉及 {total_company_loops} 个已识别的闭环:\n")
-            f.write(f"- 一级闭环: {len(loops_data['level1'])} 个\n")
-            f.write(f"- 二级闭环: {len(loops_data['level2'])} 个\n")
-            f.write(f"- 三级闭环: {len(loops_data['level3'])} 个\n\n")
+            for loop_type in loops_by_type.keys():
+                if len(loops_data[loop_type]) > 0:
+                    f.write(f"- {display_names[loop_type]}: {len(loops_data[loop_type])} 个\n")
+            f.write("\n")
             
-            if loops_data['level1']:
-                f.write("#### 一级闭环\n\n")
-                for i, cycle_idx in enumerate(loops_data['level1']):
-                    f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
-            if loops_data['level2']:
-                f.write("#### 二级闭环\n\n")
-                for i, cycle_idx in enumerate(loops_data['level2']):
-                    f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
-            if loops_data['level3']:
-                f.write("#### 三级闭环\n\n")
-                for i, cycle_idx in enumerate(loops_data['level3']):
-                    f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
+            # 写入各类型环路的详细信息
+            for loop_type in loops_by_type.keys():
+                if loops_data[loop_type]:
+                    f.write(f"#### {display_names[loop_type]}\n\n")
+                    for i, cycle_idx in enumerate(loops_data[loop_type]):
+                        f.write(f"{i+1}. {format_cycle_path(graph, cycle_idx)}\n\n")
             f.write("-" * 80 + "\n\n")
     
     logging.info(f"结果保存完成，耗时: {time.time() - save_start:.2f} 秒")
     
     total_end_time = time.time()
     logging.info(f"闭环分析完成，总用时: {total_end_time - total_start_time:.2f} 秒")
-    logging.info(f"最终结果 (去重后): 一级闭环 {unique_level1} 个, 二级闭环 {unique_level2} 个, 三级闭环 {unique_level3} 个")
-    logging.info(f"报告已保存到: {OUTPUT_FILE}")
+    logging.info(f"最终结果 (去重后):")
+    for loop_type in loops_by_type.keys():
+        logging.info(f"- {display_names[loop_type]}: {loop_counts[loop_type]} 个")
+    logging.info(f"报告已保存到: {output_file}")
     
     return True
-
 
 def main():
     """主函数"""
@@ -449,8 +544,13 @@ def main():
     logging.info(f"主图加载完成，耗时: {time.time() - start_load:.2f} 秒")
     logging.info(f"主图包含: {main_graph_for_reporting.vcount()} 节点, {main_graph_for_reporting.ecount()} 边")
     
-    logging.info("开始分析股权闭环 (性能优化版)...")
-    analyze_and_save_loops(main_graph_for_reporting, graph_path_to_use) 
+    # 使用全局配置的节点数
+    if NODE_COUNT is not None:
+        logging.info(f"根据配置，分析 {NODE_COUNT} 节点环路...")
+        analyze_and_save_loops(main_graph_for_reporting, graph_path_to_use, n=NODE_COUNT)
+    else:
+        logging.info("根据配置，分析所有环路类型...")
+        analyze_and_save_loops(main_graph_for_reporting, graph_path_to_use)
     
     logging.info("股权闭环分析完成。")
 

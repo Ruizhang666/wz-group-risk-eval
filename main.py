@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 # 确保必要的目录存在
-for directory in ["data", "model", "code", "outputs", "outputs/reports", "outputs/loop_results", "outputs/log"]:
+for directory in ["data", "model", "code", "outputs", "outputs/reports", "outputs/loop_results", "outputs/log", "outputs/loop_analysis"]:
     os.makedirs(directory, exist_ok=True)
 
 steps = [
@@ -14,6 +14,7 @@ steps = [
     ("整合交易数据并生成异构图", [sys.executable, "code/add_transaction.py"]),
     ("分析异构图并生成报告", [sys.executable, "code/exploratory_analysis.py"]),
     ("执行股权闭环检测", [sys.executable, "code/loop_detection.py"]),
+    ("执行闭环分析与统计", [sys.executable, "code/loop_profiling.py"]),
 ]
 
 def run_step(desc, cmd):
@@ -52,4 +53,5 @@ if __name__ == "__main__":
     print("- 代码文件位于 code 目录")
     print("- 分析报告位于 outputs/reports 目录")
     print("- 闭环检测结果位于 outputs/loop_results 目录")
+    print("- 闭环分析结果位于 outputs/loop_analysis 目录")
     print("- 日志文件位于 outputs/log 目录\n") 
