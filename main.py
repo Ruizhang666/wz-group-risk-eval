@@ -13,7 +13,7 @@ steps = [
     ("构建股权关系图", [sys.executable, "code/graph_builder.py"]),
     ("整合交易数据并生成异构图", [sys.executable, "code/add_transaction.py"]),
     ("分析异构图并生成报告", [sys.executable, "code/exploratory_analysis.py"]),
-    ("执行股权闭环检测", [sys.executable, "code/loop_detection.py"]),
+    ("执行股权闭环检测", [sys.executable, "code/loop_detection_nx.py"]),
     ("执行闭环分析与统计", [sys.executable, "code/loop_profiling.py"]),
 ]
 
