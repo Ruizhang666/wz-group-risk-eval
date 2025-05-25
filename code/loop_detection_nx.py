@@ -20,7 +20,7 @@ OUTPUT_DIR = "outputs"
 LOG_DIR = os.path.join(OUTPUT_DIR, "log")
 LOG_FILE = os.path.join(LOG_DIR, "loop_detection_nx.log")
 RESULTS_DIR = os.path.join(OUTPUT_DIR, "loop_results")
-OUTPUT_FILE = os.path.join(RESULTS_DIR, "equity_loops_nx.txt")
+OUTPUT_FILE = os.path.join(RESULTS_DIR, "equity_loops_optimized.txt")
 MAX_CACHE_SIZE = 10000  # 目前未使用，但保留以保持接口一致
 
 # ===== 用户可配置参数 =====

@@ -1,11 +1,11 @@
-2025-05-23 16:52:57,793 - INFO - 环路指标可视化分析工具启动
-2025-05-23 16:52:57,793 - INFO - 正在测试中文字体配置...
-2025-05-23 16:52:57,998 - INFO - 字体测试图片已保存: /Users/zhangrui/Desktop/物产中大图风控系统/outputs/visualizations/font_test.png
-2025-05-23 16:52:57,999 - INFO - 中文字体配置正常
-2025-05-23 16:52:57,999 - INFO - 开始环路指标可视化分析...
-2025-05-23 16:52:57,999 - INFO - 正在解析环路文件: /Users/zhangrui/Desktop/物产中大图风控系统/outputs/loop_results/equity_loops_optimized.txt
-2025-05-23 16:52:58,623 - INFO - 成功解析了 25235 个环路的指标数据
-2025-05-23 16:52:58,632 - INFO - 成功加载 25235 个环路的指标数据
-2025-05-23 16:53:18,667 - INFO - 生成阈值推荐报告...
-2025-05-23 16:53:18,683 - INFO - 阈值推荐报告已保存到: /Users/zhangrui/Desktop/物产中大图风控系统/outputs/visualizations/threshold_recommendations.txt
-2025-05-23 16:53:18,684 - INFO - 环路指标可视化分析完成！
+2025-05-23 22:26:04,899 - INFO - 环路指标可视化分析工具启动
+2025-05-23 22:26:04,899 - INFO - 正在测试中文字体配置...
+2025-05-23 22:26:05,133 - INFO - 字体测试图片已保存: /Users/zhangrui/Desktop/物产中大图风控系统/outputs/visualizations/font_test.png
+2025-05-23 22:26:05,133 - INFO - 中文字体配置正常
+2025-05-23 22:26:05,133 - INFO - 开始环路指标可视化分析...
+2025-05-23 22:26:05,133 - INFO - 正在解析环路文件: /Users/zhangrui/Desktop/物产中大图风控系统/outputs/loop_results/equity_loops_optimized.txt
+2025-05-23 22:26:05,765 - INFO - 成功解析了 25235 个环路的指标数据
+2025-05-23 22:26:05,773 - INFO - 成功加载 25235 个环路的指标数据
+2025-05-23 22:26:30,548 - INFO - 生成阈值推荐报告...
+2025-05-23 22:26:30,562 - INFO - 阈值推荐报告已保存到: /Users/zhangrui/Desktop/物产中大图风控系统/outputs/visualizations/threshold_recommendations.txt
+2025-05-23 22:26:30,562 - INFO - 环路指标可视化分析完成！

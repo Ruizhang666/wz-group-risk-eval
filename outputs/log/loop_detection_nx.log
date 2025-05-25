@@ -1,25 +1,25 @@
-2025-05-23 16:23:59,407 - MainProcess - INFO - 开始分析，日志记录于 outputs/log/loop_detection_nx.log
-2025-05-23 16:23:59,407 - MainProcess - INFO - 使用图文件: model/simplified_loop_detection_graph.graphml
-2025-05-23 16:23:59,408 - MainProcess - INFO - 正在从 'model/simplified_loop_detection_graph.graphml' 加载图...
-2025-05-23 16:24:00,207 - MainProcess - INFO - 图加载成功，包含 22908 个节点和 30189 条边。
-2025-05-23 16:24:00,212 - MainProcess - INFO - 主图加载完成，包含 22908 个节点, 30189 条边
-2025-05-23 16:24:00,212 - MainProcess - INFO - 根据配置，分析所有环路类型...
-2025-05-23 16:24:00,212 - MainProcess - INFO - 使用 9 个环路配置进行分析
-2025-05-23 16:24:00,212 - MainProcess - INFO - 启动并行闭环分析，使用 9 个进程 (系统有 14 个CPU核心).
-2025-05-23 16:24:43,102 - MainProcess - INFO - 开始处理闭环数据...
-2025-05-23 16:24:43,243 - MainProcess - INFO - 闭环数据处理完成，耗时: 0.14 秒
-2025-05-23 16:24:43,244 - MainProcess - INFO - 开始保存结果到文件: outputs/loop_results/equity_loops_nx.txt ...
-2025-05-23 16:24:43,550 - MainProcess - INFO - 结果保存完成，耗时: 0.31 秒
-2025-05-23 16:24:43,550 - MainProcess - INFO - 闭环分析完成，总用时: 43.34 秒
-2025-05-23 16:24:43,550 - MainProcess - INFO - 最终结果 (去重后):
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 4节点环路: 404 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 6节点环路: 1400 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 8节点环路: 10265 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 7节点环路(类型1): 4990 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 6节点环路(类型2): 1653 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 7节点环路(类型2): 4158 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 6节点环路(类型3): 929 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 5节点环路(类型1): 921 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - - 5节点环路(类型2): 515 个
-2025-05-23 16:24:43,550 - MainProcess - INFO - 报告已保存到: outputs/loop_results/equity_loops_nx.txt
-2025-05-23 16:24:43,558 - MainProcess - INFO - 股权闭环分析完成。
+2025-05-23 22:25:05,342 - MainProcess - INFO - 开始分析，日志记录于 outputs/log/loop_detection_nx.log
+2025-05-23 22:25:05,343 - MainProcess - INFO - 使用图文件: model/simplified_loop_detection_graph.graphml
+2025-05-23 22:25:05,343 - MainProcess - INFO - 正在从 'model/simplified_loop_detection_graph.graphml' 加载图...
+2025-05-23 22:25:06,078 - MainProcess - INFO - 图加载成功，包含 22908 个节点和 30189 条边。
+2025-05-23 22:25:06,082 - MainProcess - INFO - 主图加载完成，包含 22908 个节点, 30189 条边
+2025-05-23 22:25:06,082 - MainProcess - INFO - 根据配置，分析所有环路类型...
+2025-05-23 22:25:06,082 - MainProcess - INFO - 使用 9 个环路配置进行分析
+2025-05-23 22:25:06,082 - MainProcess - INFO - 启动并行闭环分析，使用 9 个进程 (系统有 14 个CPU核心).
+2025-05-23 22:25:50,426 - MainProcess - INFO - 开始处理闭环数据...
+2025-05-23 22:25:50,553 - MainProcess - INFO - 闭环数据处理完成，耗时: 0.13 秒
+2025-05-23 22:25:50,554 - MainProcess - INFO - 开始保存结果到文件: outputs/loop_results/equity_loops_optimized.txt ...
+2025-05-23 22:25:50,851 - MainProcess - INFO - 结果保存完成，耗时: 0.30 秒
+2025-05-23 22:25:50,851 - MainProcess - INFO - 闭环分析完成，总用时: 44.77 秒
+2025-05-23 22:25:50,851 - MainProcess - INFO - 最终结果 (去重后):
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 4节点环路: 404 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 6节点环路: 1400 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 8节点环路: 10265 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 7节点环路(类型1): 4990 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 6节点环路(类型2): 1653 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 7节点环路(类型2): 4158 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 6节点环路(类型3): 929 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 5节点环路(类型1): 921 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - - 5节点环路(类型2): 515 个
+2025-05-23 22:25:50,851 - MainProcess - INFO - 报告已保存到: outputs/loop_results/equity_loops_optimized.txt
+2025-05-23 22:25:50,859 - MainProcess - INFO - 股权闭环分析完成。
