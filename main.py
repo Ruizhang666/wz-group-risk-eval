@@ -9,7 +9,7 @@ required_directories = [
     "data", "model", "code", "outputs",
     "outputs/reports", "outputs/loop_results", "outputs/log",
     "outputs/loop_analysis", "outputs/loop_filter",
-    "outputs/visualizations"
+    "outputs/visualizations", "outputs/扩展画像"
 ]
 for directory in required_directories:
     os.makedirs(directory, exist_ok=True)
@@ -20,9 +20,8 @@ steps = [
     ("异构图整合: 整合交易数据", [sys.executable, "code/add_transaction.py"]),
     ("环路检测: 执行股权闭环检测 (NetworkX)", [sys.executable, "code/loop_detection_nx.py"]),
     ("环路分析: 执行闭环画像分析", [sys.executable, "code/loop_profiling.py"]),
-    ("环路筛选: 执行高性能环路筛选", [sys.executable, "code/loop_filter_script.py"]),
-    ("探索性数据分析: 分析异构图并生成报告", [sys.executable, "code/exploratory_analysis.py"]),
-    ("可视化分析: 生成环路指标可视化图表", [sys.executable, "code/loop_metrics_visualization.py"])
+    ("股权指标提取: 扩展环路画像 (多核并行)", [sys.executable, "code/equity_metrics_extractor_parallel.py"]),
+    ("简化闭环筛选: 基于时间窗口的闭环筛选 (多核并行)", [sys.executable, "code/simplified_closure_filter_parallel.py", "--months", "3", "--max-nodes", "6", "--source-type", "natural_person"])
 ]
 
 def run_step(desc, cmd):
@@ -63,12 +62,20 @@ if __name__ == "__main__":
     
     print("\n全部流程执行完毕！")
     print(f"总耗时: {total_elapsed_time:.2f} 秒 ({total_elapsed_time/60:.2f} 分钟)")
-    print("- 数据文件位于 data 目录")
-    print("- 模型文件位于 model 目录")
-    print("- 代码文件位于 code 目录")
-    print("- 分析报告位于 outputs/reports 目录 (由探索性数据分析等脚本生成)")
-    print("- 闭环检测结果位于 outputs/loop_results 目录")
-    print("- 筛选后的闭环位于 outputs/loop_filter 目录")
-    print("- 闭环深度分析结果位于 outputs/loop_analysis 目录 (由环路画像分析等脚本生成)")
-    print("- 可视化图表位于 outputs/visualizations 目录 (由可视化分析脚本生成)")
-    print("- 日志文件位于 outputs/log 目录 (部分脚本可能生成)\n") 
+    print("\n=== 输出文件说明 ===")
+    print("📁 数据文件:")
+    print("  - data/ 目录: 原始数据文件")
+    print("  - model/ 目录: 图模型文件")
+    print("\n📊 分析结果:")
+    print("  - outputs/loop_results/ 目录: 环路检测结果")
+    print("  - outputs/loop_analysis/ 目录: 环路画像分析结果")
+    print("  - outputs/扩展画像/ 目录: 综合画像数据 (交易+股权指标)")
+    print("  - outputs/loop_filter/ 目录: 简化闭环筛选结果")
+    print("  - outputs/visualizations/ 目录: 可视化图表")
+    print("\n📋 报告文件:")
+    print("  - outputs/reports/ 目录: 各类分析报告")
+    print("  - outputs/log/ 目录: 运行日志")
+    print("\n🎯 核心输出:")
+    print("  - outputs/扩展画像/loop_comprehensive_metrics.csv: 综合画像数据")
+    print("  - outputs/loop_filter/simplified_filtered_loops.csv: 筛选后的闭环")
+    print("  - 各目录下的统计报告和可视化图表\n") 
